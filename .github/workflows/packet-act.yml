@@ -28,20 +28,20 @@ jobs:
 
       - name: 安装依赖
         run: |
-          cd docsforbrt
           pnpm install
+
       - name: 打包插件
         run: |
-          cd docsforbrt
           pnpm run docs:build
-      - name: 创建谷歌浏览器扩展zip文件
+
+      - name: 创建适用于开发的zip文件
         run: |
-          cd docsforbrt
           zip -r ../Developer-Specific.zip ./
-      - name: 创建谷歌浏览器扩展zip文件
+
+      - name: 创建已完成构建的zip文件
         run: |
-          cd docsforbrt
           zip -r ../Completed-Build.zip ./docs/.vuepress/dist
+
       - name: 获取新版本号
         id: get_vite_build_version
         run: |
@@ -49,6 +49,7 @@ jobs:
           VERSION=$(node -p "require('./docsforbrt/package.json').version" 2>/dev/null || echo "v0.0.1")
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "New version:${VERSION}"
+
       - name: 创建Release
         id: create_release
         uses: softprops/action-gh-release@v2
