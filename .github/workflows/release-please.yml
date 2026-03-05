@@ -3,7 +3,7 @@ name: Release Please
 on:
   push:
     branches:
-      - main
+      - main  # 只有合并到 main 才触发
 
 permissions:
   contents: write
@@ -18,4 +18,5 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: node
           package-name: 北林文档站
-          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"docs","section":"Documentation","hidden":false}]'
+          # 自动根据提交信息更新版本号
+          # feat: -> minor, fix: -> patch, BREAKING CHANGE: -> major
