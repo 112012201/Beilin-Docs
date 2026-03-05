@@ -1,11 +1,10 @@
 name: AutoRC
 
-# 检测只有主分支的push操作会触发该工作流
 on:
   push:
     branches:
       - main
-  workflow_dispatch: # 允许手动触发该工作流
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,48 +15,79 @@ jobs:
       - name: git Code
         uses: actions/checkout@v4
         with:
-          ref: main # 指定主分支
+          ref: main
 
       - name: 指定Node.js版本
         uses: actions/setup-node@v4
         with:
-          node-version: "24.14.0" # 指定 Node.js 20 版本
+          node-version: "20.14.0"  # 建议使用更稳定的20版本，24可能还不稳定
 
       - name: 安装pnpm
         run: npm install -g pnpm@latest
 
       - name: 安装依赖
-        run: |
-          pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: 打包插件
-        run: |
-          pnpm run docs:build
-
-      - name: 创建适用于开发的zip文件
-        run: |
-          zip -r ../Developer-Specific.zip ./
+      - name: 打包文档
+        run: pnpm run docs:build
 
       - name: 创建已完成构建的zip文件
         run: |
-          zip -r ../Completed-Build.zip ./docs/.vuepress/dist
+          # 确保 dist 目录存在
+          if [ -d "./docs/.vuepress/dist" ]; then
+            cd ./docs/.vuepress/dist
+            zip -r ../../../Completed-Build.zip .
+            cd ../../..
+            echo "✅ 成功创建 Completed-Build.zip"
+          else
+            echo "❌ dist 目录不存在，构建可能失败"
+            exit 1
+          fi
 
-      - name: 获取新版本号
-        id: get_vite_build_version
+      - name: 创建完整的项目源码zip文件
         run: |
-          # 尝试从 package.json 中获取版本号
-          VERSION=$(node -p "require('./docsforbrt/package.json').version" 2>/dev/null || echo "v0.0.1")
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "New version:${VERSION}"
+          # 创建包含所有源代码的 zip（排除 node_modules 和 git 文件）
+          zip -r Developer-Specific.zip . \
+            -x "*.git*" \
+            -x "node_modules/**" \
+            -x "docs/.vuepress/.cache/**" \
+            -x "docs/.vuepress/.temp/**" \
+            -x "docs/.vuepress/dist/**" \
+            -x "*.zip"
+          echo "✅ 成功创建 Developer-Specific.zip"
+
+      - name: 获取版本号
+        id: get_version
+        run: |
+          # 直接从项目根目录的 package.json 获取版本
+          if [ -f "./package.json" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+            echo "VERSION=${VERSION}" >> $GITHUB_ENV
+            echo "✅ 获取到版本号: ${VERSION}"
+          else
+            VERSION="0.0.1"
+            echo "VERSION=${VERSION}" >> $GITHUB_ENV
+            echo "⚠️ package.json 不存在，使用默认版本: ${VERSION}"
+          fi
+
+      - name: 查看创建的文件
+        run: |
+          echo "📁 当前目录文件列表："
+          ls -la
+          echo "📁 查看根目录的 zip 文件："
+          ls -la *.zip || echo "没有找到 zip 文件"
 
       - name: 创建Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
-          name: v${{ env.VERSION }}
+          tag_name: v${{ env.VERSION }}
+          name: Release v${{ env.VERSION }}
           draft: false
           prerelease: false
           files: |
-            ./Completed-Build.zip
-            ./Developer-Specific.zip
+            Completed-Build.zip
+            Developer-Specific.zip
+          fail_on_unmatched_files: false  # 即使文件缺失也不会失败
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
