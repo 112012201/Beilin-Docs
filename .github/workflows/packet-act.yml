@@ -2,28 +2,22 @@ name: AutoRC
 
 on:
   release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: '手动指定版本号'
-        required: false
+    types: [published]  # 当 Release PR 合并后，Release 被发布时触发
+  workflow_dispatch:    # 手动触发备选
 
 jobs:
   build-and-package:
     name: Build & Package
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # 允许写入内容（包括上传 Release 文件）
-      pull-requests: write  # 允许操作 PR
-      # releases: write     # ❌ 删除这一行，GitHub Actions 不支持这个权限
+      contents: write
+      releases: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          ref: ${{ github.event.release.tag_name || 'main' }}
+          ref: ${{ github.event.release.tag_name }}  # 检出对应标签的代码
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,75 +29,33 @@ jobs:
         with:
           run_install: false
 
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build docs
         run: pnpm run docs:build
 
-      # 使用专门的 Action 打包构建产物
+      # 打包构建产物
       - name: 📦 Package built files
         uses: montudor/action-zip@v1
         with:
           args: zip -qq -r Completed-Build.zip ./docs/.vuepress/dist
 
-      # 使用专门的 Action 打包源代码
+      # 打包源代码（排除不需要的文件）
       - name: 📦 Package source code
         uses: montudor/action-zip@v1
         with:
           args: zip -qq -r Developer-Specific.zip . -x "*.git*" "node_modules/*" "docs/.vuepress/dist/*" "docs/.vuepress/.cache/*" "docs/.vuepress/.temp/*" "*.zip"
 
-      # 验证打包结果
-      - name: Verify packages
-        run: |
-          echo "📁 查看生成的 zip 文件："
-          ls -lh *.zip
-          echo "📁 Completed-Build.zip 大小：$(du -h Completed-Build.zip | cut -f1)"
-          echo "📁 Developer-Specific.zip 大小：$(du -h Developer-Specific.zip | cut -f1)"
-
-      # 确定版本号
-      - name: Determine version
-        id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            # 从 Release 事件获取版本号
-            VERSION="${{ github.event.release.tag_name }}"
-            VERSION=${VERSION#v}
-          elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
-            # 手动指定的版本号
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            # 从 package.json 读取
-            VERSION=$(node -p "require('./package.json').version")
-          fi
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "✅ 版本号: ${VERSION}"
-
-      # 上传到现有的 Release 或创建新的
+      # 上传到 Release
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || format('v{0}', env.VERSION) }}
-          name: ${{ github.event.release.name || format('Release v{0}', env.VERSION) }}
-          body: ${{ github.event.release.body || '自动构建的 Release' }}
+          tag_name: ${{ github.event.release.tag_name }}
+          name: ${{ github.event.release.name }}
+          body: ${{ github.event.release.body }}
           files: |
             Completed-Build.zip
             Developer-Specific.zip
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
