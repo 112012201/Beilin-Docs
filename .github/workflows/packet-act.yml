@@ -2,8 +2,8 @@ name: AutoRC
 
 on:
   release:
-    types: [published]  # 当 Release Please 发布 Release 时触发
-  workflow_dispatch:     # 也支持手动触发
+    types: [published]
+  workflow_dispatch:
     inputs:
       version:
         description: '手动指定版本号'
@@ -14,8 +14,9 @@ jobs:
     name: Build & Package
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      releases: write
+      contents: write      # 允许写入内容（创建标签等）
+      pull-requests: write  # 允许操作 PR
+      releases: write      # 允许上传 Release 文件
 
     steps:
       - name: Checkout code
@@ -54,33 +55,17 @@ jobs:
       - name: Build docs
         run: pnpm run docs:build
 
-      # ===== 使用专门的 Action 打包构建产物 =====
+      # 使用专门的 Action 打包构建产物
       - name: 📦 Package built files
         uses: montudor/action-zip@v1
         with:
           args: zip -qq -r Completed-Build.zip ./docs/.vuepress/dist
 
-      # ===== 使用专门的 Action 打包源代码 =====
+      # 使用专门的 Action 打包源代码
       - name: 📦 Package source code
         uses: montudor/action-zip@v1
         with:
           args: zip -qq -r Developer-Specific.zip . -x "*.git*" "node_modules/*" "docs/.vuepress/dist/*" "docs/.vuepress/.cache/*" "docs/.vuepress/.temp/*" "*.zip"
-
-      # ===== 或者使用另一个专门的 Action =====
-      # - name: 📦 Package with zip-release
-      #   uses: thedoctor0/zip-release@0.7.6
-      #   with:
-      #     type: 'zip'
-      #     filename: 'Completed-Build.zip'
-      #     path: './docs/.vuepress/dist'
-
-      # - name: 📦 Package source with zip-release
-      #   uses: thedoctor0/zip-release@0.7.6
-      #   with:
-      #     type: 'zip'
-      #     filename: 'Developer-Specific.zip'
-      #     path: '.'
-      #     exclusions: '*.git* node_modules docs/.vuepress/dist docs/.vuepress/.cache docs/.vuepress/.temp *.zip'
 
       # 验证打包结果
       - name: Verify packages
@@ -97,7 +82,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "release" ]]; then
             # 从 Release 事件获取版本号
             VERSION="${{ github.event.release.tag_name }}"
-            VERSION=${VERSION#v}  # 去掉 v 前缀
+            VERSION=${VERSION#v}
           elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
             # 手动指定的版本号
             VERSION="${{ github.event.inputs.version }}"
