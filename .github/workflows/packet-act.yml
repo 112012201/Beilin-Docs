@@ -1,93 +1,125 @@
 name: AutoRC
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  release:
+    types: [published]  # 当 Release Please 发布 Release 时触发
+  workflow_dispatch:     # 也支持手动触发
+    inputs:
+      version:
+        description: '手动指定版本号'
+        required: false
 
 jobs:
-  build:
-    name: PackEdit
+  build-and-package:
+    name: Build & Package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      releases: write
 
     steps:
-      - name: git Code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: main
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || 'main' }}
 
-      - name: 指定Node.js版本
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.14.0"  # 建议使用更稳定的20版本，24可能还不稳定
+          node-version: "20.14.0"
 
-      - name: 安装pnpm
-        run: npm install -g pnpm@latest
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
 
-      - name: 安装依赖
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: 打包文档
+      - name: Build docs
         run: pnpm run docs:build
 
-      - name: 创建已完成构建的zip文件
+      # ===== 使用专门的 Action 打包构建产物 =====
+      - name: 📦 Package built files
+        uses: montudor/action-zip@v1
+        with:
+          args: zip -qq -r Completed-Build.zip ./docs/.vuepress/dist
+
+      # ===== 使用专门的 Action 打包源代码 =====
+      - name: 📦 Package source code
+        uses: montudor/action-zip@v1
+        with:
+          args: zip -qq -r Developer-Specific.zip . -x "*.git*" "node_modules/*" "docs/.vuepress/dist/*" "docs/.vuepress/.cache/*" "docs/.vuepress/.temp/*" "*.zip"
+
+      # ===== 或者使用另一个专门的 Action =====
+      # - name: 📦 Package with zip-release
+      #   uses: thedoctor0/zip-release@0.7.6
+      #   with:
+      #     type: 'zip'
+      #     filename: 'Completed-Build.zip'
+      #     path: './docs/.vuepress/dist'
+
+      # - name: 📦 Package source with zip-release
+      #   uses: thedoctor0/zip-release@0.7.6
+      #   with:
+      #     type: 'zip'
+      #     filename: 'Developer-Specific.zip'
+      #     path: '.'
+      #     exclusions: '*.git* node_modules docs/.vuepress/dist docs/.vuepress/.cache docs/.vuepress/.temp *.zip'
+
+      # 验证打包结果
+      - name: Verify packages
         run: |
-          # 确保 dist 目录存在
-          if [ -d "./docs/.vuepress/dist" ]; then
-            cd ./docs/.vuepress/dist
-            zip -r ../../../Completed-Build.zip .
-            cd ../../..
-            echo "✅ 成功创建 Completed-Build.zip"
+          echo "📁 查看生成的 zip 文件："
+          ls -lh *.zip
+          echo "📁 Completed-Build.zip 大小：$(du -h Completed-Build.zip | cut -f1)"
+          echo "📁 Developer-Specific.zip 大小：$(du -h Developer-Specific.zip | cut -f1)"
+
+      # 确定版本号
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # 从 Release 事件获取版本号
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION=${VERSION#v}  # 去掉 v 前缀
+          elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
+            # 手动指定的版本号
+            VERSION="${{ github.event.inputs.version }}"
           else
-            echo "❌ dist 目录不存在，构建可能失败"
-            exit 1
-          fi
-
-      - name: 创建完整的项目源码zip文件
-        run: |
-          # 创建包含所有源代码的 zip（排除 node_modules 和 git 文件）
-          zip -r Developer-Specific.zip . \
-            -x "*.git*" \
-            -x "node_modules/**" \
-            -x "docs/.vuepress/.cache/**" \
-            -x "docs/.vuepress/.temp/**" \
-            -x "docs/.vuepress/dist/**" \
-            -x "*.zip"
-          echo "✅ 成功创建 Developer-Specific.zip"
-
-      - name: 获取版本号
-        id: get_version
-        run: |
-          # 直接从项目根目录的 package.json 获取版本
-          if [ -f "./package.json" ]; then
+            # 从 package.json 读取
             VERSION=$(node -p "require('./package.json').version")
-            echo "VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "✅ 获取到版本号: ${VERSION}"
-          else
-            VERSION="0.0.1"
-            echo "VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "⚠️ package.json 不存在，使用默认版本: ${VERSION}"
           fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "✅ 版本号: ${VERSION}"
 
-      - name: 查看创建的文件
-        run: |
-          echo "📁 当前目录文件列表："
-          ls -la
-          echo "📁 查看根目录的 zip 文件："
-          ls -la *.zip || echo "没有找到 zip 文件"
-
-      - name: 创建Release
-        id: create_release
+      # 上传到现有的 Release 或创建新的
+      - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          name: Release v${{ env.VERSION }}
-          draft: false
-          prerelease: false
+          tag_name: ${{ github.event.release.tag_name || format('v{0}', env.VERSION) }}
+          name: ${{ github.event.release.name || format('Release v{0}', env.VERSION) }}
+          body: ${{ github.event.release.body || '自动构建的 Release' }}
           files: |
             Completed-Build.zip
             Developer-Specific.zip
-          fail_on_unmatched_files: false  # 即使文件缺失也不会失败
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
