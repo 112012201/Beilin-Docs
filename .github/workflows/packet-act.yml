@@ -14,9 +14,9 @@ jobs:
     name: Build & Package
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # 允许写入内容（创建标签等）
+      contents: write      # 允许写入内容（包括上传 Release 文件）
       pull-requests: write  # 允许操作 PR
-      releases: write      # 允许上传 Release 文件
+      # releases: write     # ❌ 删除这一行，GitHub Actions 不支持这个权限
 
     steps:
       - name: Checkout code
