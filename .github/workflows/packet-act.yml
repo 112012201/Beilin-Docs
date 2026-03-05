@@ -1,0 +1,62 @@
+name: AutoRC
+
+# 检测只有主分支的push操作会触发该工作流
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # 允许手动触发该工作流
+
+jobs:
+  build:
+    name: PackEdit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: git Code
+        uses: actions/checkout@v4
+        with:
+          ref: main # 指定主分支
+
+      - name: 指定Node.js版本
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0" # 指定 Node.js 20 版本
+
+      - name: 安装pnpm
+        run: npm install -g pnpm@latest
+
+      - name: 安装依赖
+        run: |
+          cd docsforbrt
+          pnpm install
+      - name: 打包插件
+        run: |
+          cd docsforbrt
+          pnpm run docs:build
+      - name: 创建谷歌浏览器扩展zip文件
+        run: |
+          cd docsforbrt
+          zip -r ../Developer-Specific.zip ./
+      - name: 创建谷歌浏览器扩展zip文件
+        run: |
+          cd docsforbrt
+          zip -r ../Completed-Build.zip ./docs/.vuepress/dist
+      - name: 获取新版本号
+        id: get_vite_build_version
+        run: |
+          # 尝试从 package.json 中获取版本号
+          VERSION=$(node -p "require('./docsforbrt/package.json').version" 2>/dev/null || echo "v0.0.1")
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "New version:${VERSION}"
+      - name: 创建Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            ./Completed-Build.zip
+            ./Developer-Specific.zip
