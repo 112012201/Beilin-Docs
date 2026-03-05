@@ -2,8 +2,13 @@ name: AutoRC
 
 on:
   release:
-    types: [published]  # 当 Release PR 合并后，Release 被发布时触发
-  workflow_dispatch:    # 手动触发备选
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如: 1.2.3)'
+        required: true  # 设为必填，确保有版本号
+        default: ''
 
 jobs:
   build-and-package:
@@ -16,7 +21,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}  # 检出对应标签的代码
+          fetch-depth: 0
+          # 如果是 Release 触发，检出对应标签；否则检出 main
+          ref: ${{ github.event.release.tag_name || 'main' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,21 +47,67 @@ jobs:
         with:
           args: zip -qq -r Completed-Build.zip ./docs/.vuepress/dist
 
-      # 打包源代码（排除不需要的文件）
+      # 打包源代码
       - name: 📦 Package source code
         uses: montudor/action-zip@v1
         with:
           args: zip -qq -r Developer-Specific.zip . -x "*.git*" "node_modules/*" "docs/.vuepress/dist/*" "docs/.vuepress/.cache/*" "docs/.vuepress/.temp/*" "*.zip"
 
+      # 确定版本号（关键修复）
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # Release 触发：从事件中获取标签名
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VERSION="${TAG_NAME#v}"  # 去掉 v 前缀
+            echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+          elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
+            # 手动触发：从输入获取版本号
+            VERSION="${{ github.event.inputs.version }}"
+            # 确保版本号有 v 前缀（用于标签）
+            if [[ $VERSION != v* ]]; then
+              TAG_NAME="v${VERSION}"
+            else
+              TAG_NAME="${VERSION}"
+              VERSION="${VERSION#v}"
+            fi
+            echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+            
+            # 创建标签（如果不存在）
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+              git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+              git push origin "$TAG_NAME"
+              echo "✅ 创建标签: $TAG_NAME"
+            fi
+          else
+            echo "❌ 错误: 未提供版本号"
+            exit 1
+          fi
+          
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "✅ 版本号: ${VERSION}, 标签: ${TAG_NAME}"
+
       # 上传到 Release
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
-          name: ${{ github.event.release.name }}
-          body: ${{ github.event.release.body }}
+          tag_name: ${{ env.TAG_NAME || github.event.release.tag_name }}
+          name: Release ${{ env.VERSION || github.event.release.name }}
+          body: ${{ github.event.release.body || format('版本 {0} 自动发布', env.VERSION) }}
           files: |
             Completed-Build.zip
             Developer-Specific.zip
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 验证上传结果
+      - name: Verify upload
+        run: |
+          echo "✅ Release 创建/更新完成"
+          echo "📁 标签: ${{ env.TAG_NAME || github.event.release.tag_name }}"
+          echo "📦 文件: Completed-Build.zip, Developer-Specific.zip"
