@@ -117,12 +117,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // 从 steps 获取变量，确保有默认值
-            const timestamp = '${{ steps.timestamp.outputs.timestamp || "unknown" }}';
-            const featCount = '${{ steps.commits.outputs.feat_count || "0" }}';
-            const fixCount = '${{ steps.commits.outputs.fix_count || "0" }}';
-            const docsCount = '${{ steps.commits.outputs.docs_count || "0" }}';
-            const totalCount = '${{ steps.commits.outputs.total_count || "0" }}';
+            // 从 steps 获取变量，在 JavaScript 中处理默认值
+            const timestamp = '${{ steps.timestamp.outputs.timestamp }}' || 'unknown';
+            const featCount = '${{ steps.commits.outputs.feat_count }}' || '0';
+            const fixCount = '${{ steps.commits.outputs.fix_count }}' || '0';
+            const docsCount = '${{ steps.commits.outputs.docs_count }}' || '0';
+            const totalCount = '${{ steps.commits.outputs.total_count }}' || '0';
             
             // 获取提交详情
             const { data: commits } = await github.rest.repos.compareCommits({
