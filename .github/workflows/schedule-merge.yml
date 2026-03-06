@@ -85,30 +85,44 @@ jobs:
         if: steps.check_updates.outputs.has_updates == 'true'
         run: |
           # 获取提交列表
-          git log --oneline origin/main..origin/preview > commits.txt
+          git log --oneline origin/main..origin/preview > commits.txt 2>/dev/null || echo "" > commits.txt
           
-          # 统计提交类型
-          FEAT_COUNT=$(grep -c "^[0-9a-f]\+ feat" commits.txt || echo 0)
-          FIX_COUNT=$(grep -c "^[0-9a-f]\+ fix" commits.txt || echo 0)
-          DOCS_COUNT=$(grep -c "^[0-9a-f]\+ docs" commits.txt || echo 0)
-          TOTAL_COUNT=$(cat commits.txt | wc -l | tr -d ' ')
+          # 统计提交类型（处理空文件的情况）
+          if [ -s commits.txt ]; then
+            FEAT_COUNT=$(grep -c "^[0-9a-f]\+ feat" commits.txt || echo "0")
+            FIX_COUNT=$(grep -c "^[0-9a-f]\+ fix" commits.txt || echo "0")
+            DOCS_COUNT=$(grep -c "^[0-9a-f]\+ docs" commits.txt || echo "0")
+            TOTAL_COUNT=$(cat commits.txt | wc -l | tr -d ' ' || echo "0")
+          else
+            FEAT_COUNT="0"
+            FIX_COUNT="0"
+            DOCS_COUNT="0"
+            TOTAL_COUNT="0"
+          fi
           
+          # 确保输出是字符串格式
           echo "feat_count=${FEAT_COUNT}" >> $GITHUB_OUTPUT
           echo "fix_count=${FIX_COUNT}" >> $GITHUB_OUTPUT
           echo "docs_count=${DOCS_COUNT}" >> $GITHUB_OUTPUT
           echo "total_count=${TOTAL_COUNT}" >> $GITHUB_OUTPUT
+          
+          echo "统计结果:"
+          echo "  feat: ${FEAT_COUNT}"
+          echo "  fix: ${FIX_COUNT}"
+          echo "  docs: ${DOCS_COUNT}"
+          echo "  total: ${TOTAL_COUNT}"
 
       - name: Create Pull Request
         if: steps.check_updates.outputs.has_updates == 'true' && steps.check_pr.outputs.exists == 'false'
         uses: actions/github-script@v7
         with:
           script: |
-            // 从 steps 获取变量
-            const timestamp = '${{ steps.timestamp.outputs.timestamp }}';
-            const featCount = '${{ steps.commits.outputs.feat_count }}';
-            const fixCount = '${{ steps.commits.outputs.fix_count }}';
-            const docsCount = '${{ steps.commits.outputs.docs_count }}';
-            const totalCount = '${{ steps.commits.outputs.total_count }}';
+            // 从 steps 获取变量，确保有默认值
+            const timestamp = '${{ steps.timestamp.outputs.timestamp || "unknown" }}';
+            const featCount = '${{ steps.commits.outputs.feat_count || "0" }}';
+            const fixCount = '${{ steps.commits.outputs.fix_count || "0" }}';
+            const docsCount = '${{ steps.commits.outputs.docs_count || "0" }}';
+            const totalCount = '${{ steps.commits.outputs.total_count || "0" }}';
             
             // 获取提交详情
             const { data: commits } = await github.rest.repos.compareCommits({
@@ -120,20 +134,24 @@ jobs:
             
             // 构建提交列表字符串
             let commitList = '';
-            commits.commits.slice(0, 15).forEach(commit => {
-              const msg = commit.commit.message.split('\n')[0];
-              const shortSha = commit.sha.slice(0, 7);
-              commitList += `- [\\\`${shortSha}\\\`](${commit.html_url}) ${msg}\n`;
-            });
-            
-            if (commits.total_commits > 15) {
-              commitList += `- ... 还有 ${commits.total_commits - 15} 个提交\n`;
+            if (commits.commits && commits.commits.length > 0) {
+              commits.commits.slice(0, 15).forEach(commit => {
+                const msg = commit.commit.message.split('\n')[0];
+                const shortSha = commit.sha.slice(0, 7);
+                commitList += `- [\`${shortSha}\`](${commit.html_url}) ${msg}\n`;
+              });
+              
+              if (commits.total_commits > 15) {
+                commitList += `- ... 还有 ${commits.total_commits - 15} 个提交\n`;
+              }
+            } else {
+              commitList = '- 没有新提交\n';
             }
             
             // 构建 PR 标题
             const prTitle = `[Schedule] Merge preview → main ${timestamp}`;
             
-            // 构建 PR 描述 - 使用普通字符串，避免模板字符串语法错误
+            // 构建 PR 描述
             const prBody = 
               "## 🤖 定时自动合并请求\n\n" +
               "### 📋 基本信息\n" +
@@ -181,18 +199,22 @@ jobs:
             
             // 构建提交列表
             let commitList = '';
-            commits.commits.slice(0, 15).forEach(commit => {
-              const msg = commit.commit.message.split('\n')[0];
-              const shortSha = commit.sha.slice(0, 7);
-              commitList += `- [\\\`${shortSha}\\\`](${commit.html_url}) ${msg}\n`;
-            });
+            if (commits.commits && commits.commits.length > 0) {
+              commits.commits.slice(0, 15).forEach(commit => {
+                const msg = commit.commit.message.split('\n')[0];
+                const shortSha = commit.sha.slice(0, 7);
+                commitList += `- [\`${shortSha}\`](${commit.html_url}) ${msg}\n`;
+              });
+            } else {
+              commitList = '- 没有新提交\n';
+            }
             
             // 更新 PR 描述
             const updatedBody = 
               "## 🤖 定时自动合并请求（已更新）\n\n" +
               "### 📋 基本信息\n" +
               `- **最后更新**: ${new Date().toISOString()}\n` +
-              `- **提交总数**: ${commits.total_commits}\n\n` +
+              `- **提交总数**: ${commits.total_commits || 0}\n\n` +
               "### 📝 最新提交列表\n" +
               `${commitList}\n` +
               "### ✅ 自动处理\n" +
@@ -215,7 +237,7 @@ jobs:
           echo "## 🔄 定时合并任务执行结果" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **执行时间**: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "- **提交数**: ${{ steps.commits.outputs.total_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **提交数**: ${{ steps.commits.outputs.total_count || 0 }}" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ steps.check_pr.outputs.exists }}" == "true" ]; then
             echo "- **操作**: 更新现有 PR #${{ steps.check_pr.outputs.number }}" >> $GITHUB_STEP_SUMMARY
