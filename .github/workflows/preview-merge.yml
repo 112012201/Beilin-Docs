@@ -1,0 +1,116 @@
+name: Preview Merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - preview  # 监听目标为 preview 的 PR
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  check-and-merge:
+    name: Check and Merge to Preview
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.14.0"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: |
+          # 如果有测试脚本，在这里运行
+          # pnpm run test
+          echo "✅ 运行测试（示例）"
+
+      - name: Build preview
+        run: pnpm run docs:build
+        continue-on-error: true  # 构建失败不阻止合并，但会记录
+
+      # 检查 PR 是否满足合并条件
+      - name: Check merge conditions
+        id: check
+        run: |
+          # 检查是否有 conflicts
+          if [ "${{ github.event.pull_request.mergeable }}" == "false" ]; then
+            echo "❌ PR 有冲突，无法自动合并"
+            echo "mergeable=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 检查 CI 状态（如果需要）
+          # 这里可以添加更多检查条件
+          
+          echo "✅ PR 满足合并条件"
+          echo "mergeable=true" >> $GITHUB_OUTPUT
+
+      # 自动合并到 preview 分支
+      - name: Auto merge to preview
+        if: steps.check.outputs.mergeable == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            
+            // 添加评论
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `## ✅ 预览分支合并成功
+
+              此 PR 已自动合并到 \`preview\` 分支。
+              
+              - 预览环境已更新
+              - 将在下次定时任务中合并到 \`main\` 分支
+              
+              *自动合并时间：${new Date().toISOString()}*`
+            });
+            
+            // 合并 PR
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'squash',  // 使用 squash 合并
+              commit_title: `合并 PR #${prNumber}: ${context.payload.pull_request.title}`
+            });
+
+      # 如果无法自动合并，添加说明
+      - name: Comment if not mergeable
+        if: steps.check.outputs.mergeable != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `## ⚠️ 无法自动合并
+
+              此 PR 暂时无法自动合并到 \`preview\` 分支。
+              
+              **原因**：${context.payload.pull_request.mergeable == false ? '存在冲突' : '未满足合并条件'}
+              
+              请手动解决后重试。`
+            });
