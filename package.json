@@ -1,7 +1,7 @@
 {
   "name": "北林文档站",
   "type": "module",
-  "version": "1.0.0",
+  "version": "1.0.5-cand",
   "description": "服务器官方文档站",
   "packageManager": "pnpm@10.30.0",
   "license": "MIT",
