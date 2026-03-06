@@ -1,0 +1,236 @@
+name: Sync Preview with Main
+
+on:
+  push:
+    branches:
+      - main  # 当 main 有更新时触发
+  schedule:
+    - cron: '0 */6 * * *'  # 每6小时检查一次
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '强制同步（忽略检查，会覆盖 preview）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  pull-requests: write  # 用于创建通知 PR
+
+jobs:
+  check-and-sync:
+    name: Check and Sync preview ← main
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取所有历史用于比较
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Check if preview branch exists
+        id: check_exists
+        run: |
+          if git ls-remote --heads origin preview | grep preview; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ preview 分支存在"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ preview 分支不存在"
+          fi
+
+      - name: Create preview branch if not exists
+        if: steps.check_exists.outputs.exists == 'false'
+        run: |
+          echo "🔄 preview 分支不存在，从 main 创建..."
+          git checkout -b preview
+          git push origin preview
+          echo "✅ preview 分支已创建"
+          echo "created=true" >> $GITHUB_ENV
+
+      - name: Analyze branch differences
+        id: analyze
+        if: steps.check_exists.outputs.exists == 'true'
+        run: |
+          # 获取 main 和 preview 的最新提交
+          MAIN_HEAD=$(git rev-parse origin/main)
+          PREVIEW_HEAD=$(git rev-parse origin/preview)
+          
+          echo "main HEAD: $MAIN_HEAD"
+          echo "preview HEAD: $PREVIEW_HEAD"
+          
+          # 计算领先/落后提交数
+          AHEAD=$(git rev-list --count origin/preview..origin/main)  # main 有但 preview 没有
+          BEHIND=$(git rev-list --count origin/main..origin/preview)  # preview 有但 main 没有
+          
+          echo "main 领先 preview: $AHEAD (main有但preview没有)"
+          echo "preview 领先 main: $BEHIND (preview有但main没有)"
+          
+          echo "main_ahead=$AHEAD" >> $GITHUB_OUTPUT
+          echo "preview_ahead=$BEHIND" >> $GITHUB_OUTPUT
+          
+          # 检查 preview 是否有独有内容
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "❌ preview 有 $BEHIND 个独有提交"
+            echo "has_unique=true" >> $GITHUB_OUTPUT
+            echo "unique_count=$BEHIND" >> $GITHUB_OUTPUT
+          else
+            echo "✅ preview 没有独有内容"
+            echo "has_unique=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # 检查是否需要同步
+          if [ "$AHEAD" -gt 0 ] && [ "$BEHIND" -eq 0 ]; then
+            echo "✅ preview 可以安全同步（没有独有内容，且落后于 main）"
+            echo "can_sync=true" >> $GITHUB_OUTPUT
+            echo "sync_method=ff" >> $GITHUB_OUTPUT
+          elif [ "$AHEAD" -eq 0 ] && [ "$BEHIND" -eq 0 ]; then
+            echo "✅ main 和 preview 已经同步"
+            echo "can_sync=false" >> $GITHUB_OUTPUT
+            echo "sync_status=already_synced" >> $GITHUB_OUTPUT
+          elif [ "$BEHIND" -gt 0 ]; then
+            echo "❌ preview 有独有内容，取消自动同步"
+            echo "can_sync=false" >> $GITHUB_OUTPUT
+            echo "sync_status=has_unique" >> $GITHUB_OUTPUT
+          fi
+
+      # 情况1：preview 没有独有内容，可以安全同步
+      - name: Safe sync (fast-forward)
+        if: steps.analyze.outputs.can_sync == 'true' && steps.analyze.outputs.sync_method == 'ff'
+        run: |
+          echo "🔄 执行安全同步 (main → preview)"
+          
+          # 更新 preview 分支
+          git checkout -b preview origin/preview 2>/dev/null || git checkout -b preview
+          git merge --ff-only origin/main
+          
+          # 推送更新
+          git push origin preview
+          
+          echo "✅ preview 已通过 fast-forward 更新到 main"
+          echo "更新了 ${{ steps.analyze.outputs.main_ahead }} 个提交"
+          
+          # 记录同步信息
+          echo "sync_success=true" >> $GITHUB_ENV
+          echo "sync_message=安全同步成功" >> $GITHUB_ENV
+
+      # 情况2：preview 有独有内容，取消同步
+      - name: Cancel sync due to unique content
+        if: steps.analyze.outputs.has_unique == 'true' && github.event.inputs.force != 'true'
+        run: |
+          echo "❌ preview 有独有内容，取消自动同步"
+          echo "独有提交数: ${{ steps.analyze.outputs.unique_count }}"
+          
+          # 输出独有提交的详细信息
+          echo "📋 preview 独有提交列表："
+          git log origin/main..origin/preview --oneline --no-merges
+          
+          echo "cancel_reason=preview_has_unique" >> $GITHUB_ENV
+          echo "unique_commits=$(git log origin/main..origin/preview --oneline --no-merges | wc -l)" >> $GITHUB_ENV
+
+      # 情况3：已经同步
+      - name: Already in sync
+        if: steps.analyze.outputs.sync_status == 'already_synced'
+        run: |
+          echo "✅ main 和 preview 已经同步，无需操作"
+
+      # 情况4：强制同步（忽略检查）
+      - name: Force sync from main
+        if: github.event.inputs.force == 'true'
+        run: |
+          echo "⚠️ 执行强制同步 (main → preview) - 将覆盖 preview 的所有独有内容"
+          
+          # 记录将被覆盖的独有内容
+          BEHIND=$(git rev-list --count origin/main..origin/preview 2>/dev/null || echo "0")
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "📋 以下 $BEHIND 个 preview 独有提交将被覆盖："
+            git log origin/main..origin/preview --oneline --no-merges
+          fi
+          
+          # 强制将 preview 设置为 main 的内容
+          git branch -f preview origin/main
+          
+          # 强制推送（会覆盖 preview）
+          git push origin preview --force
+          
+          echo "✅ preview 已强制同步为 main 的内容"
+          echo "force_sync=true" >> $GITHUB_ENV
+
+      # 创建通知（当同步被取消时）
+      - name: Create notification issue/comment
+        if: env.cancel_reason == 'preview_has_unique'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const uniqueCount = '${{ steps.analyze.outputs.unique_count }}';
+            const mainAhead = '${{ steps.analyze.outputs.main_ahead }}';
+            
+            // 获取独有提交列表
+            const { data: commits } = await github.rest.repos.compareCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'main',
+              head: 'preview'
+            });
+            
+            let commitList = '';
+            commits.commits.slice(0, 10).forEach(commit => {
+              commitList += `- [\`${commit.sha.slice(0,7)}\`](${commit.html_url}) ${commit.commit.message.split('\n')[0]}\n`;
+            });
+            
+            if (commits.total_commits > 10) {
+              commitList += `- ... 还有 ${commits.total_commits - 10} 个提交\n`;
+            }
+            
+            // 创建通知评论（可以在现有的 Issue 或 PR 中）
+            // 这里简单地在 Actions 摘要中输出
+            console.log(`## ⚠️ preview 同步被取消\n`);
+            console.log(`### 原因\n`);
+            console.log(`preview 分支有 ${uniqueCount} 个 main 分支没有的独有提交\n`);
+            console.log(`### 独有提交列表\n`);
+            console.log(commitList);
+            console.log(`\n### 建议\n`);
+            console.log(`1. 如果这些独有内容需要保留，请先合并到 main 分支\n`);
+            console.log(`2. 如果不需要保留，可以手动运行工作流并勾选 "强制同步"\n`);
+            
+            // 也可以创建 Issue
+            // await github.rest.issues.create({
+            //   owner: context.repo.owner,
+            //   repo: context.repo.repo,
+            //   title: `⚠️ preview 分支同步被取消 - ${new Date().toISOString().slice(0,10)}`,
+            //   body: `...`
+            // });
+
+      # 输出同步摘要
+      - name: Sync summary
+        if: always()
+        run: |
+          echo "## 🔄 分支同步结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **时间**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **触发方式**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.analyze.outputs.sync_status }}" == "already_synced" ]]; then
+            echo "- **状态**: 已同步，无需操作 ✅" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ env.cancel_reason }}" == "preview_has_unique" ]]; then
+            echo "- **状态**: 同步取消 ⚠️" >> $GITHUB_STEP_SUMMARY
+            echo "- **原因**: preview 有 ${{ steps.analyze.outputs.unique_count }} 个独有提交" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### preview 独有提交" >> $GITHUB_STEP_SUMMARY
+            git log origin/main..origin/preview --oneline --no-merges >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ env.sync_success }}" == "true" ]]; then
+            echo "- **状态**: 同步成功 ✅" >> $GITHUB_STEP_SUMMARY
+            echo "- **更新提交数**: ${{ steps.analyze.outputs.main_ahead }}" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ env.force_sync }}" == "true" ]]; then
+            echo "- **状态**: 强制同步完成 ⚠️" >> $GITHUB_STEP_SUMMARY
+            echo "- **操作**: preview 已被 main 覆盖" >> $GITHUB_STEP_SUMMARY
+          fi
