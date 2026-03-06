@@ -1,11 +1,10 @@
-name: AI Code Review (DeepSeek)
+name: 01 🤖 AI Code Review
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
       - preview
-      - main
 
 permissions:
   contents: read
@@ -13,21 +12,30 @@ permissions:
 
 jobs:
   ai-review:
+    name: AI Review
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: Louis-7/ai-code-review@development
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: DeepSeek Code Review
+        uses: Louis-7/ai-code-review@development
         env:
           ENGINE: 'deepseek'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_BASE_URL: 'https://api.deepseek.com'
-          CHAT_GPT_MODEL: 'deepseek-chat'  # 使用V3节省token
+          CHAT_GPT_MODEL: 'deepseek-chat'
           PATH_TO_EXCLUDE: '**/*.lock, **/dist/**, **/node_modules/**, **/*.min.js, docs/.vuepress/dist/**'
-          MAX_FILE_PER_PR: 10  # 限制每次审查的文件数
-          MAX_CHANGE_LINES: 500  # 总变更行数限制
+          MAX_FILE_PER_PR: 20
           LANGUAGE: 'Chinese'
-          # 自定义提示词，强调"建议性"语气，减少不必要的输出
           CUSTOMIZED_PROMPT: |
             你是一位温和的代码审查助手。请用建议性的语气指出潜在问题，
-            使用"可以考虑"、"或许可以"等委婉表达。只关注真正重要的代码质量问题，
-            忽略格式、风格等非关键问题。每个问题最多用两句话描述。
+            使用"可以考虑"、"或许可以"等委婉表达。关注代码质量、性能和安全性。
+            如果发现问题，请提供改进建议和示例代码。
+            
+            注意：你只提供建议，最终决定权在人工审核者手中。
