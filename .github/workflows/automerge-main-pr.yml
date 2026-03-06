@@ -1,0 +1,81 @@
+name: Auto Merge main PR
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+      - edited
+      - ready_for_review
+    branches:
+      - main  # 只监听目标为 main 的 PR
+  pull_request_review:
+    types:
+      - submitted
+    branches:
+      - main
+  check_suite:
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: 🤖 Auto Merge main PR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Auto merge
+        id: automerge
+        uses: pascalgn/automerge-action@v0.16.4
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          
+          # 合并条件配置
+          MERGE_LABELS: "auto-merge"  # 只有带此标签的 PR 才会自动合并
+          MERGE_REMOVE_LABELS: "auto-merge"  # 合并后移除标签
+          
+          # 合并方法
+          MERGE_METHOD: "squash"  # squash, merge, rebase 三选一
+          MERGE_COMMIT_MESSAGE: "pull-request-title-and-description"  # 提交信息格式
+          
+          # 合并时机
+          MERGE_FORKS: "false"  # 是否合并 fork 仓库的 PR（设为 false 更安全）
+          MERGE_RETRIES: "5"  # 合并失败重试次数
+          MERGE_RETRY_SLEEP: "30000"  # 重试间隔（毫秒）
+          
+          # 检查条件
+          MERGE_REQUIRED_APPROVALS: "0"  # 不需要人工 approve（因为是自动创建的）
+          MERGE_DELETE_BRANCH: "true"  # 合并后自动删除源分支
+          
+          # 自动合并触发条件
+          MERGE_ALWAYS: "false"  # 不总是合并，只合并符合标签的
+          
+          # 更新 PR 分支
+          UPDATE_METHOD: "merge"  # 自动更新 PR 分支到最新 main
+          UPDATE_LABELS: "auto-merge"  # 只更新带此标签的 PR
+          UPDATE_RETRIES: "3"
+
+      - name: Log merge result
+        if: always()
+        run: |
+          echo "## 🤖 自动合并结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR**: #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **标题**: ${{ github.event.pull_request.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **状态**: ${{ steps.automerge.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **时间**: $(date)" >> $GITHUB_STEP_SUMMARY
