@@ -1,316 +1,125 @@
-name: Schedule Merge to Main
+name: Auto Merge Bot PRs
 
 on:
-  schedule:
-    # 每天凌晨2点运行
-    - cron: '0 2 * * *'
-  workflow_dispatch:  # 也支持手动触发
-    inputs:
-      force:
-        description: '强制合并（忽略检查）'
-        required: false
-        default: 'false'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  create-merge-pr:
-    name: Create Merge PR from preview to main
+  check-and-merge:
+    name: Check and Merge Bot PRs
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
 
-      - name: Configure Git
+      - name: Check PR creator
+        id: check_creator
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-      - name: Fetch preview branch
-        run: git fetch origin preview
-
-      - name: Check if preview has updates
-        id: check_updates
-        run: |
-          # 检查 preview 是否领先 main
-          AHEAD=$(git rev-list --count origin/main..origin/preview)
+          PR_CREATOR="${{ github.event.pull_request.user.login }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_SOURCE="${{ github.event.pull_request.head.ref }}"
+          PR_TARGET="${{ github.event.pull_request.base.ref }}"
           
-          if [ "$AHEAD" -gt 0 ]; then
-            echo "✅ preview 分支领先 main 分支 $AHEAD 个提交"
-            echo "has_updates=true" >> $GITHUB_OUTPUT
-            echo "commit_count=$AHEAD" >> $GITHUB_OUTPUT
-          else
-            echo "ℹ️ preview 分支没有新更新"
-            echo "has_updates=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Generate unique identifier
-        id: generate_id
-        if: steps.check_updates.outputs.has_updates == 'true'
-        run: |
-          # 生成日期时间戳
-          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          echo "📋 PR 信息："
+          echo "  - 编号: #${PR_NUMBER}"
+          echo "  - 标题: ${PR_TITLE}"
+          echo "  - 创建者: ${PR_CREATOR}"
+          echo "  - 源分支: ${PR_SOURCE}"
+          echo "  - 目标分支: ${PR_TARGET}"
           
-          # 生成 UUID v4
-          if command -v uuidgen > /dev/null; then
-            UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-          else
-            UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          # GitHub Actions 机器人的用户名列表
+          BOT_USERS=("github-actions" "github-actions[bot]" "dependabot[bot]" "renovate[bot]" "dependabot")
+          
+          IS_BOT=false
+          for bot in "${BOT_USERS[@]}"; do
+            if [[ "$PR_CREATOR" == "$bot" ]]; then
+              IS_BOT=true
+              echo "✅ 这是机器人 (${bot}) 创建的 PR"
+              break
+            fi
+          done
+          
+          # 也可以根据标题判断（可选）
+          if [[ "$PR_TITLE" == "[Auto]"* ]] || [[ "$PR_TITLE" == "[Schedule]"* ]]; then
+            echo "✅ 根据标题判断为自动 PR"
+            IS_BOT=true
           fi
           
-          UNIQUE_ID="${TIMESTAMP}-${UUID}"
-          
-          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
-          echo "uuid=${UUID}" >> $GITHUB_OUTPUT
-          echo "unique_id=${UNIQUE_ID}" >> $GITHUB_OUTPUT
-          
-          echo "✅ 生成唯一标识: ${UNIQUE_ID}"
+          if [ "$IS_BOT" == "true" ]; then
+            echo "should_auto_merge=true" >> $GITHUB_OUTPUT
+            echo "creator_type=bot" >> $GITHUB_OUTPUT
+          else
+            echo "should_auto_merge=false" >> $GITHUB_OUTPUT
+            echo "creator_type=human" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Check for existing PR
-        id: check_pr
-        if: steps.check_updates.outputs.has_updates == 'true'
+      - name: Add comment for human PR
+        if: steps.check_creator.outputs.should_auto_merge == 'false'
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: pulls } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: 'preview',
-              base: 'main',
-              state: 'open'
-            });
+            const prNumber = context.payload.pull_request.number;
+            const prCreator = context.payload.pull_request.user.login;
             
-            if (pulls.length > 0) {
-              console.log(`📌 已有打开的 PR #${pulls[0].number}`);
-              core.setOutput('pr_exists', 'true');
-              core.setOutput('pr_number', pulls[0].number);
-            } else {
-              console.log('📌 没有打开的 PR');
-              core.setOutput('pr_exists', 'false');
-            }
-
-      - name: Get commit details
-        id: commit_details
-        if: steps.check_updates.outputs.has_updates == 'true'
-        run: |
-          # 获取提交列表并统计
-          git log --oneline origin/main..origin/preview > commits.txt
-          
-          FEAT_COUNT=$(grep -c "^[0-9a-f]\+ feat" commits.txt || echo 0)
-          FIX_COUNT=$(grep -c "^[0-9a-f]\+ fix" commits.txt || echo 0)
-          DOCS_COUNT=$(grep -c "^[0-9a-f]\+ docs" commits.txt || echo 0)
-          BREAKING_COUNT=$(grep -c "BREAKING CHANGE" commits.txt || echo 0)
-          
-          echo "feat_count=${FEAT_COUNT}" >> $GITHUB_OUTPUT
-          echo "fix_count=${FIX_COUNT}" >> $GITHUB_OUTPUT
-          echo "docs_count=${DOCS_COUNT}" >> $GITHUB_OUTPUT
-          echo "breaking_count=${BREAKING_COUNT}" >> $GITHUB_OUTPUT
-          
-          # 确定版本建议
-          if [ "$BREAKING_COUNT" -gt 0 ]; then
-            echo "version_hint=major" >> $GITHUB_OUTPUT
-          elif [ "$FEAT_COUNT" -gt 0 ]; then
-            echo "version_hint=minor" >> $GITHUB_OUTPUT
-          else
-            echo "version_hint=patch" >> $GITHUB_OUTPUT
-          fi
-
-      # 创建新的 PR（带 auto-merge 标签）
-      - name: Create Pull Request with auto-merge
-        if: steps.check_updates.outputs.has_updates == 'true' && steps.check_pr.outputs.pr_exists == 'false'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const uniqueId = '${{ steps.generate_id.outputs.unique_id }}';
-            const timestamp = '${{ steps.generate_id.outputs.timestamp }}';
-            const uuid = '${{ steps.generate_id.outputs.uuid }}';
-            
-            // 获取提交详情
-            const { data: commits } = await github.rest.repos.compareCommits({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              base: 'main',
-              head: 'preview'
-            });
-            
-            // 构建提交列表
-            let commitList = '';
-            commits.commits.slice(0, 20).forEach(commit => {
-              const msg = commit.commit.message.split('\n')[0];
-              commitList += `- [\`${commit.sha.slice(0,7)}\`](${commit.html_url}) ${msg}\n`;
-            });
-            
-            if (commits.total_commits > 20) {
-              commitList += `- ... 还有 ${commits.total_commits - 20} 个提交\n`;
-            }
-            
-            // 构建 PR 标题（包含唯一标识）
-            const prTitle = `[Schedule] Merge preview → main ${timestamp} [${uuid.slice(0,8)}]`;
-            
-            // 构建 PR 描述
-            const prBody = `## 🤖 定时自动合并请求
-
-### 📋 基本信息
-- **唯一标识**: \`${uniqueId}\`
-- **创建时间**: ${new Date().toISOString()}
-- **触发方式**: 定时任务（每天凌晨2点）
-- **提交总数**: ${commits.total_commits}
-
-### 📊 提交统计
-- ✨ 新功能 (feat): ${{ steps.commit_details.outputs.feat_count }}
-- 🐛 修复 (fix): ${{ steps.commit_details.outputs.fix_count }}
-- 📝 文档 (docs): ${{ steps.commit_details.outputs.docs_count }}
-- 💥 破坏性变更: ${{ steps.commit_details.outputs.breaking_count }}
-
-### 🔍 版本建议
-根据提交信息分析，建议版本更新类型：**${{ steps.commit_details.outputs.version_hint }}**
-
-### 📝 提交列表
-${commitList}
-
-### ✅ 自动合并
-此 PR **已启用自动合并**，所有检查通过后将自动合并到 \`main\` 分支。
-
----
-*ID: \`${uniqueId}\`*`;
-
-            // 创建 PR
-            const { data: pr } = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: prTitle,
-              head: 'preview',
-              base: 'main',
-              body: prBody,
-              maintainer_can_modify: true
-            });
-            
-            console.log(`✅ 创建 PR #${pr.number}: ${prTitle}`);
-            
-            // 添加 auto-merge 标签（触发 automerge 工作流）
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              labels: ['auto-merge', 'schedule-merge', `auto-${timestamp}`]
-            });
-            
-            // 可选：直接启用 GitHub 原生 auto-merge
-            try {
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                auto_merge: true,
-                merge_method: 'squash'
-              });
-              console.log('✅ 已启用原生 auto-merge');
-            } catch (error) {
-              console.log('⚠️ 无法启用原生 auto-merge，将依赖标签触发');
-            }
-            
-            // 添加评论确认
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: pr.number,
-              body: `## 🤖 自动合并已启用
-
-此 PR 已配置自动合并，将在以下条件满足后自动合并：
-
-- [ ] 所有 CI 检查通过
-- [ ] 没有合并冲突
-- [ ] 分支保护规则满足
-
-⏱️ 预计等待时间：1-5 分钟
-
-[!NOTE]
-如果不想自动合并，可以移出 \`auto-merge\` 标签。`
+              issue_number: prNumber,
+              body: `## 👤 人工创建的 PR\n\n### 检测结果\n- **创建者**: @${prCreator}\n- **类型**: 人工提交\n\n此 PR 将由人工审核团队进行审查。\n\n### 下一步\n- 等待代码审查\n- 人工合并到 \`main\` 分支\n\n---\n*自动检测：此 PR 由人工创建，已跳过自动合并。*`
             });
 
-      # 更新现有 PR（如果存在）
-      - name: Update existing PR
-        if: steps.check_updates.outputs.has_updates == 'true' && steps.check_pr.outputs.pr_exists == 'true'
+      - name: Auto merge bot PR
+        if: steps.check_creator.outputs.should_auto_merge == 'true'
+        uses: pascalgn/automerge-action@v0.16.4
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          MERGE_LABELS: ""  # 不需要标签
+          MERGE_METHOD: "squash"
+          MERGE_COMMIT_MESSAGE: "pull-request-title-and-description"
+          MERGE_RETRIES: "5"
+          MERGE_RETRY_SLEEP: "30000"
+          MERGE_REQUIRED_APPROVALS: "0"  # 不需要人工审批
+          MERGE_DELETE_BRANCH: "true"    # 合并后删除源分支
+          UPDATE_METHOD: "merge"
+
+      - name: Add auto-merge comment for bot PR
+        if: steps.check_creator.outputs.should_auto_merge == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = ${{ steps.check_pr.outputs.pr_number }};
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const prCreator = context.payload.pull_request.user.login;
             
-            // 获取最新提交
-            const { data: commits } = await github.rest.repos.compareCommits({
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              base: 'main',
-              head: 'preview'
+              issue_number: prNumber,
+              body: `## 🤖 机器人 PR 自动合并\n\n### 检测结果\n- **创建者**: ${prCreator}\n- **类型**: 机器人自动创建\n- **PR 标题**: ${prTitle}\n\n### 自动合并信息\n- **状态**: ⏳ 等待 CI 检查通过\n- **合并方式**: squash\n- **合并后操作**: 自动删除源分支\n\n### 自动合并条件\n- ✅ 由机器人创建\n- ⏳ CI 检查通过\n- ⏳ 无合并冲突\n\n---\n*此 PR 将自动合并，无需人工干预。*`
             });
-            
-            // 构建更新后的提交列表
-            let commitList = '';
-            commits.commits.slice(0, 20).forEach(commit => {
-              const msg = commit.commit.message.split('\n')[0];
-              commitList += `- [\`${commit.sha.slice(0,7)}\`](${commit.html_url}) ${msg}\n`;
-            });
-            
-            // 更新 PR 描述
-            const updatedBody = `## 🤖 定时自动合并请求（已更新）
 
-### 📋 基本信息
-- **最后更新**: ${new Date().toISOString()}
-- **提交总数**: ${commits.total_commits}
-
-### 📝 最新提交列表
-${commitList}
-
-### ✅ 自动合并
-此 PR 仍保持自动合并状态。
-
----
-*自动更新于 ${new Date().toISOString()}*`;
-            
-            await github.rest.pulls.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-              body: updatedBody
-            });
-            
-            console.log(`✅ 更新 PR #${prNumber}`);
-            
-            // 确保 auto-merge 标签存在
-            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber
-            });
-            
-            const hasAutoMerge = labels.some(label => label.name === 'auto-merge');
-            if (!hasAutoMerge) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: ['auto-merge']
-              });
-              console.log('✅ 重新添加 auto-merge 标签');
-            }
-
-      - name: Send notification
-        if: steps.check_updates.outputs.has_updates == 'true'
+      - name: Log result
+        if: always()
         run: |
-          echo "## 🔄 定时合并任务执行结果" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔄 PR 处理结果" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **执行时间**: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "- **更新状态**: preview 分支有 ${{ steps.check_updates.outputs.commit_count }} 个新提交" >> $GITHUB_STEP_SUMMARY
-          if [[ '${{ steps.check_pr.outputs.pr_exists }}' == 'true' ]]; then
-            echo "- **操作**: 更新现有 PR #${{ steps.check_pr.outputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR 编号**: #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR 标题**: ${{ github.event.pull_request.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **创建者**: ${{ github.event.pull_request.user.login }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **创建者类型**: ${{ steps.check_creator.outputs.creator_type }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check_creator.outputs.should_auto_merge }}" == "true" ]; then
+            echo "- **处理方式**: 🤖 自动合并" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- **操作**: 创建新 PR（已启用自动合并）" >> $GITHUB_STEP_SUMMARY
-            echo "- **唯一标识**: ${{ steps.generate_id.outputs.unique_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **处理方式**: 👤 等待人工审核" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "- **状态**: ✅ 完成" >> $GITHUB_STEP_SUMMARY
