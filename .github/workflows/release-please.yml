@@ -1,9 +1,9 @@
-name: Release Please
+name: 04 📦 Release Please
 
 on:
   push:
     branches:
-      - main  # 只有合并到 main 才触发
+      - main
 
 permissions:
   contents: write
@@ -12,11 +12,28 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: node
           package-name: 北林文档站
-          # 自动根据提交信息更新版本号
-          # feat: -> minor, fix: -> patch, BREAKING CHANGE: -> major
+          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"docs","section":"Documentation","hidden":false}]'
+
+      # 如果 Release Please 创建了版本（release_created == true），则触发 AutoRC
+      - name: Trigger AutoRC
+        if: steps.release.outputs.release_created == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: auto-rc
+          client-payload: |
+            {
+              "tag_name": "${{ steps.release.outputs.tag_name }}",
+              "version": "${{ steps.release.outputs.version }}"
+            }
