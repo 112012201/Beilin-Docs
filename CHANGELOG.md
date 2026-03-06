@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.7-cand](https://github.com/112012201/Beilin-Docs/compare/v1.0.6-cand...v1.0.7-cand) (2026-03-06)
+
+
+### Bug Fixes
+
+* 修复了intro无法读取的问题 ([4929101](https://github.com/112012201/Beilin-Docs/commit/492910129558772818b9b121deef97a4c5e3d626))
+* 修复了intro无法读取的问题 ([4929101](https://github.com/112012201/Beilin-Docs/commit/492910129558772818b9b121deef97a4c5e3d626))
+* 修复了intro无法读取的问题 ([11dfe48](https://github.com/112012201/Beilin-Docs/commit/11dfe485ccdea548468d799872d2ae934431d616))
+
 ## [1.0.6-cand](https://github.com/112012201/Beilin-Docs/compare/v1.0.5-cand...v1.0.6-cand) (2026-03-06)
 
 
