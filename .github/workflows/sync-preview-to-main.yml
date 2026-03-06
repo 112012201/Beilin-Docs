@@ -1,0 +1,117 @@
+name: Sync Preview to Main
+
+on:
+  push:
+    branches:
+      - preview
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: preview
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      # 检测 preview 相对于 main 是否存在删除文件
+      - name: Check for deleted files
+        id: check_deletions
+        run: |
+          DELETED=$(git diff --diff-filter=D --name-only origin/main origin/preview)
+          if [ -n "$DELETED" ]; then
+            echo "Deletions found:"
+            echo "$DELETED"
+            {
+              echo 'DELETED_FILES<<EOF'
+              echo "$DELETED"
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "No deletions found."
+          fi
+
+      # 若存在删除，则创建或更新人工审核 PR
+      - name: Check for existing manual review PR
+        if: steps.check_deletions.outputs.DELETED_FILES != ''
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(gh pr list --base main --head preview --state open --json number --jq '.[0].number // ""')
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update manual review PR
+        if: steps.check_deletions.outputs.DELETED_FILES != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="[Manual Review] Deletions detected in preview"
+          BODY="Preview branch has deleted the following files compared to main. Please review and confirm.\n\n\`\`\`\n${{ steps.check_deletions.outputs.DELETED_FILES }}\n\`\`\`\n\nIf approved, add the label **safe-to-merge** to this PR to trigger auto-merge (time-based)."
+          if [ -n "${{ steps.existing_pr.outputs.PR_NUMBER }}" ]; then
+            gh pr edit "${{ steps.existing_pr.outputs.PR_NUMBER }}" --body "$BODY"
+            echo "Updated existing PR #${{ steps.existing_pr.outputs.PR_NUMBER }}"
+          else
+            gh pr create \
+              --base main \
+              --head preview \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label "manual-review"
+            echo "Created new PR for manual review."
+          fi
+          echo "Manual review required. Exiting."
+          exit 0
+
+      # 无删除，执行基于时间的自动合并
+      - name: Time-based merge preview into main
+        if: steps.check_deletions.outputs.DELETED_FILES == ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git checkout -b main origin/main
+
+          # 尝试合并 preview，但不自动提交
+          git merge --no-commit --no-ff origin/preview || true
+
+          # 处理冲突（若有）
+          if [ -f .git/MERGE_MSG ]; then
+            echo "Conflicts detected, resolving by latest modification time..."
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            for file in $CONFLICTS; do
+              echo "Resolving conflict for $file"
+              TIME_MAIN=$(git log -1 --format=%ct origin/main -- "$file" 2>/dev/null || echo 0)
+              TIME_PREVIEW=$(git log -1 --format=%ct origin/preview -- "$file" 2>/dev/null || echo 0)
+              if [ $TIME_PREVIEW -gt $TIME_MAIN ]; then
+                echo "Using preview version (newer)"
+                git checkout --theirs -- "$file"
+              else
+                echo "Using main version (newer or equal)"
+                git checkout --ours -- "$file"
+              fi
+              git add "$file"
+            done
+          fi
+
+          # 完成合并提交
+          if [ -f .git/MERGE_MSG ]; then
+            git commit -m "Merge preview into main with time-based conflict resolution"
+          else
+            echo "No merge commit needed (fast-forward?)"
+            git merge --ff-only origin/preview || true
+          fi
+
+          git push origin HEAD:main
