@@ -1,0 +1,243 @@
+name: 02 🔄 Create preview→main PR
+
+on:
+  push:
+    branches:
+      - preview
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-main-pr:
+    name: Create Main PR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Fetch preview branch
+        run: git fetch origin preview
+
+      - name: Check if preview has updates
+        id: check_updates
+        run: |
+          AHEAD=$(git rev-list --count origin/main..origin/preview)
+          
+          if [ "$AHEAD" -gt 0 ]; then
+            echo "preview 领先 main $AHEAD 个提交"
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "commit_count=$AHEAD" >> $GITHUB_OUTPUT
+          else
+            echo "preview 没有新更新"
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate unique identifier
+        id: generate_id
+        if: steps.check_updates.outputs.has_updates == 'true'
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          
+          if command -v uuidgen > /dev/null; then
+            UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          else
+            UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          fi
+          
+          UNIQUE_ID="${TIMESTAMP}-${UUID}"
+          
+          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "uuid=${UUID}" >> $GITHUB_OUTPUT
+          echo "unique_id=${UNIQUE_ID}" >> $GITHUB_OUTPUT
+          
+          echo "✅ 生成唯一标识: ${UNIQUE_ID}"
+
+      - name: Check for existing PR
+        id: check_pr
+        if: steps.check_updates.outputs.has_updates == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: 'preview',
+              base: 'main',
+              state: 'open'
+            });
+            
+            core.setOutput('pr_exists', pulls.length > 0 ? 'true' : 'false');
+            if (pulls.length > 0) {
+              core.setOutput('pr_number', pulls[0].number);
+            }
+
+      - name: Get commit details
+        id: commit_details
+        if: steps.check_updates.outputs.has_updates == 'true'
+        run: |
+          FEAT_COUNT=$(git log --oneline origin/main..origin/preview | grep -c "^[0-9a-f]\+ feat" || echo 0)
+          FIX_COUNT=$(git log --oneline origin/main..origin/preview | grep -c "^[0-9a-f]\+ fix" || echo 0)
+          DOCS_COUNT=$(git log --oneline origin/main..origin/preview | grep -c "^[0-9a-f]\+ docs" || echo 0)
+          
+          echo "feat_count=${FEAT_COUNT}" >> $GITHUB_OUTPUT
+          echo "fix_count=${FIX_COUNT}" >> $GITHUB_OUTPUT
+          echo "docs_count=${DOCS_COUNT}" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        if: steps.check_updates.outputs.has_updates == 'true' && steps.check_pr.outputs.pr_exists == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const uniqueId = '${{ steps.generate_id.outputs.unique_id }}';
+            const timestamp = '${{ steps.generate_id.outputs.timestamp }}';
+            const uuid = '${{ steps.generate_id.outputs.uuid }}';
+            
+            const { data: commits } = await github.rest.repos.compareCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'main',
+              head: 'preview'
+            });
+            
+            let commitList = '';
+            commits.commits.slice(0, 20).forEach(commit => {
+              const msg = commit.commit.message.split('\n')[0];
+              commitList += `- [\`${commit.sha.slice(0,7)}\`](${commit.html_url}) ${msg}\n`;
+            });
+            
+            if (commits.total_commits > 20) {
+              commitList += `- ... 还有 ${commits.total_commits - 20} 个提交\n`;
+            }
+            
+            const prTitle = `[Auto] Merge preview → main ${timestamp} [${uuid.slice(0,8)}]`;
+            
+            const prBody = `## 🤖 自动合并请求
+
+### 📋 基本信息
+- **唯一标识**: \`${uniqueId}\`
+- **创建时间**: ${new Date().toISOString()}
+- **提交总数**: ${commits.total_commits}
+
+### 📊 提交统计
+- ✨ 新功能 (feat): ${{ steps.commit_details.outputs.feat_count }}
+- 🐛 修复 (fix): ${{ steps.commit_details.outputs.fix_count }}
+- 📝 文档 (docs): ${{ steps.commit_details.outputs.docs_count }}
+
+### 📝 提交列表
+${commitList}
+
+### ✅ 自动处理
+此 PR 已启用自动合并，所有检查通过后将自动合并到 \`main\` 分支。
+
+---
+*ID: \`${uniqueId}\`*`;
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: prTitle,
+              head: 'preview',
+              base: 'main',
+              body: prBody,
+              maintainer_can_modify: true
+            });
+            
+            // 添加自动合并标签
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: ['auto-merge', `auto-${timestamp}`]
+            });
+            
+            console.log(`✅ 创建 PR #${pr.number}: ${prTitle}`);
+
+      - name: Update existing PR
+        if: steps.check_updates.outputs.has_updates == 'true' && steps.check_pr.outputs.pr_exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.check_pr.outputs.pr_number }};
+            
+            const { data: commits } = await github.rest.repos.compareCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'main',
+              head: 'preview'
+            });
+            
+            let commitList = '';
+            commits.commits.slice(0, 20).forEach(commit => {
+              const msg = commit.commit.message.split('\n')[0];
+              commitList += `- [\`${commit.sha.slice(0,7)}\`](${commit.html_url}) ${msg}\n`;
+            });
+            
+            const updatedBody = `## 🤖 自动合并请求（已更新）
+
+### 📋 基本信息
+- **最后更新**: ${new Date().toISOString()}
+- **提交总数**: ${commits.total_commits}
+
+### 📝 提交列表
+${commitList}
+
+---
+*自动更新*`;
+            
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              body: updatedBody
+            });
+            
+            console.log(`✅ 更新 PR #${prNumber}`);
+
+      - name: Notify original PR
+        if: steps.check_updates.outputs.has_updates == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const uniqueId = '${{ steps.generate_id.outputs.unique_id }}';
+            
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'preview',
+              state: 'closed',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 1
+            });
+            
+            if (pulls.length > 0 && pulls[0].merged_at) {
+              const lastPR = pulls[0];
+              const mainPRNumber = '${{ steps.check_pr.outputs.pr_number || '新创建的PR' }}';
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: lastPR.number,
+                body: `## 🚀 已创建合并到 main 的 PR
+
+您合并的 PR #${lastPR.number} 已触发自动化流程。
+
+### 🔗 自动创建的 PR
+- **PR 链接**: #${mainPRNumber}
+- **唯一标识**: \`${uniqueId}\`
+- **状态**: 已启用自动合并
+
+🤖 感谢您的贡献！`
+              });
+            }
