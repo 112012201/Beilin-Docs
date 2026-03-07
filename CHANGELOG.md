@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.7-WIP](https://github.com/112012201/Beilin-Docs/compare/v1.0.7-cand...v1.2.7-WIP) (2026-03-07)
+
+
+### Release-As
+
+* 1.2.7-WIP ([3263dba](https://github.com/112012201/Beilin-Docs/commit/3263dbab6ef4234042e2e5f4caa82361fede6eaf))
+
 ## [1.0.7-cand](https://github.com/112012201/Beilin-Docs/compare/v1.0.6-cand...v1.0.7-cand) (2026-03-06)
 
 
