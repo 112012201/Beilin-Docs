@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.0-WIP](https://github.com/112012201/Beilin-Docs/compare/v1.2.7-WIP...v1.3.0-WIP) (2026-03-08)
+
+
+### Features
+
+* Edit revise various clauses ([3ba1e39](https://github.com/112012201/Beilin-Docs/commit/3ba1e39c8430a049c67d8c1831e924993b571cf4))
+* Edit revise various clauses ([3ba1e39](https://github.com/112012201/Beilin-Docs/commit/3ba1e39c8430a049c67d8c1831e924993b571cf4))
+* 修订服务器规章制度 ([e760ffd](https://github.com/112012201/Beilin-Docs/commit/e760ffd14e8c9ab467b7f47c486ea9e5bbd3571d))
+* 修订服务器规章制度 ([7bf8a00](https://github.com/112012201/Beilin-Docs/commit/7bf8a00efdaffa282e40e7db954162f9d78c9d1b))
+
 ## [1.2.7-WIP](https://github.com/112012201/Beilin-Docs/compare/v1.0.7-cand...v1.2.7-WIP) (2026-03-07)
 
 
