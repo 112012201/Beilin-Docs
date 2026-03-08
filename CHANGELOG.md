@@ -23,6 +23,15 @@
 
 ### Release-As
 
+* 1.2.7 ([43b521a](https://github.com/112012201/Beilin-Docs/commit/43b521a5f33925828e0f59c5fd64b201b30f6755))
+* 1.2.7 ([d11f342](https://github.com/112012201/Beilin-Docs/commit/d11f342e62f3cfba8ec405689fe97e6fe3775941))
+* 1.2.7 ([d8ecec0](https://github.com/112012201/Beilin-Docs/commit/d8ecec0c816494385d51eeca7bca63bac02a8ad5))
+
+## [1.2.7](https://github.com/112012201/Beilin-Docs/compare/v1.2.7...v1.2.7) (2026-03-08)
+
+
+### Release-As
+
 * 1.2.7 ([d11f342](https://github.com/112012201/Beilin-Docs/commit/d11f342e62f3cfba8ec405689fe97e6fe3775941))
 * 1.2.7 ([d8ecec0](https://github.com/112012201/Beilin-Docs/commit/d8ecec0c816494385d51eeca7bca63bac02a8ad5))
 
