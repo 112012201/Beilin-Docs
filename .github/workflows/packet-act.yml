@@ -121,5 +121,6 @@ jobs:
           files: |
             Completed-Build.zip
             Developer-Specific.zip
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
