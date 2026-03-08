@@ -45,7 +45,6 @@ jobs:
 
       - name: 📦 Package built files (without parent directories)
         run: |
-          # 进入dist目录并打包其所有内容
           cd ./docs/.vuepress/dist
           zip -qq -r ../../../Completed-Build.zip .
           cd ../../..
@@ -59,26 +58,14 @@ jobs:
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            # 从 client_payload 获取版本和修改日志
             TAG_NAME="${{ github.event.client_payload.tag_name }}"
             VERSION="${{ github.event.client_payload.version }}"
             
-            # 获取修改日志（如果存在）
             if [[ -n "${{ github.event.client_payload.changelog }}" ]]; then
               CHANGELOG="${{ github.event.client_payload.changelog }}"
             else
-              # 尝试从CHANGELOG.md文件获取当前版本的内容
               if [[ -f "CHANGELOG.md" ]]; then
-                # 提取当前版本的修改日志
-                CHANGELOG=$(awk -v version="$VERSION" '
-                  /^##? / {
-                    if (found) exit
-                    if ($0 ~ version || $0 ~ "v" version) found=1
-                    next
-                  }
-                  found && /^##? / {exit}
-                  found {print}
-                ' CHANGELOG.md)
+                CHANGELOG=$(sed -n "/^## \\?${VERSION}/,/^## /p" CHANGELOG.md | sed '1d;$d')
               fi
             fi
           elif [[ "${{ github.event_name }}" == "release" ]]; then
@@ -88,25 +75,14 @@ jobs:
           elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
             VERSION="${{ github.event.inputs.version }}"
             TAG_NAME="v${VERSION}"
-            # 从CHANGELOG.md获取对应版本的内容
             if [[ -f "CHANGELOG.md" ]]; then
-              CHANGELOG=$(awk -v version="$VERSION" '
-                /^##? / {
-                  if (found) exit
-                  if ($0 ~ version || $0 ~ "v" version) found=1
-                  next
-                }
-                found && /^##? / {exit}
-                found {print}
-              ' CHANGELOG.md)
+              CHANGELOG=$(sed -n "/^## \\?${VERSION}/,/^## /p" CHANGELOG.md | sed '1d;$d')
             fi
           else
-            # 默认从 package.json 读取
             VERSION=$(node -p "require('./package.json').version")
             TAG_NAME="v${VERSION}"
           fi
           
-          # 将多行内容保存到文件，避免环境变量限制
           if [[ -n "$CHANGELOG" ]]; then
             echo "$CHANGELOG" > changelog.txt
           fi
@@ -118,28 +94,21 @@ jobs:
       - name: Generate release body
         id: generate_body
         run: |
+          # 创建发布说明文件
+          echo "## 版本 ${VERSION} 发布" > release_body.md
+          echo "" >> release_body.md
+          
           if [[ -f "changelog.txt" ]]; then
-            CHANGELOG_CONTENT=$(cat changelog.txt)
-            cat > release_body.md << EOF
-## 版本 ${VERSION} 发布
-
-### 📝 更新日志
-
-${CHANGELOG_CONTENT}
-
-### 📦 包含文件
-- \`Completed-Build.zip\`: 构建完成的文档文件（包含dist目录所有内容）
-- \`Developer-Specific.zip\`: 完整源代码包（已排除依赖和构建文件）
-EOF
-          else
-            cat > release_body.md << EOF
-## 版本 ${VERSION} 发布
-
-### 📦 包含文件
-- \`Completed-Build.zip\`: 构建完成的文档文件（包含dist目录所有内容）
-- \`Developer-Specific.zip\`: 完整源代码包（已排除依赖和构建文件）
-EOF
+            echo "### 📝 更新日志" >> release_body.md
+            echo "" >> release_body.md
+            cat changelog.txt >> release_body.md
+            echo "" >> release_body.md
           fi
+          
+          echo "### 📦 包含文件" >> release_body.md
+          echo "" >> release_body.md
+          echo "- \`Completed-Build.zip\`: 构建完成的文档文件（包含dist目录所有内容）" >> release_body.md
+          echo "- \`Developer-Specific.zip\`: 完整源代码包（已排除依赖和构建文件）" >> release_body.md
           
           echo "RELEASE_BODY_FILE=release_body.md" >> $GITHUB_ENV
 
