@@ -36,7 +36,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           current_body=$(gh release view "$TAG_NAME" --repo "$REPO" --json body --jq .body)
-          new_body="${current_body}\n\n> **⚠️ 警告：此版本正在Build中，请勿下载源代码。**\n> **⚠️ Warning: This version is being built, do not download the source code.**"
+          new_body="${current_body}\n\n> **⚠️ 警告：此版本正在构建中，请勿下载源代码。**\n> **⚠️ Warning: This version is being built, do not download the source code.**"
           gh release edit "$TAG_NAME" --repo "$REPO" --notes "$new_body"
 
       - name: Trigger AutoRC
