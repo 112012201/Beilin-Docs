@@ -1,0 +1,126 @@
+name: 05 🚀 AutoRC Package
+
+on:
+  repository_dispatch:
+    types: [auto-rc]  # 由 Release Please 触发
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如: 1.2.3)'
+        required: false
+  release:
+    types: [published]  # 保留原触发方式作为备选
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-and-package:
+    name: Build & Package
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.tag_name || github.event.release.tag_name || 'main' }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.14.0"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build docs
+        run: pnpm run docs:build
+
+      - name: 📦 Package built files (without parent directories)
+        run: |
+          cd ./docs/.vuepress/dist
+          zip -qq -r ../../../Completed-Build.zip .
+          cd ../../..
+
+      - name: 📦 Package source code
+        uses: montudor/action-zip@v1
+        with:
+          args: zip -qq -r Developer-Specific.zip . -x "*.git*" "node_modules/*" "docs/.vuepress/dist/*" "docs/.vuepress/.cache/*" "docs/.vuepress/.temp/*" "*.zip"
+
+      - name: Determine version and changelog
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            TAG_NAME="${{ github.event.client_payload.tag_name }}"
+            VERSION="${{ github.event.client_payload.version }}"
+            
+            if [[ -n "${{ github.event.client_payload.changelog }}" ]]; then
+              CHANGELOG="${{ github.event.client_payload.changelog }}"
+            else
+              if [[ -f "CHANGELOG.md" ]]; then
+                CHANGELOG=$(sed -n "/^## \\?${VERSION}/,/^## /p" CHANGELOG.md | sed '1d;$d')
+              fi
+            fi
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VERSION="${TAG_NAME#v}"
+            CHANGELOG="${{ github.event.release.body }}"
+          elif [[ "${{ github.event.inputs.version }}" != "" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG_NAME="v${VERSION}"
+            if [[ -f "CHANGELOG.md" ]]; then
+              CHANGELOG=$(sed -n "/^## \\?${VERSION}/,/^## /p" CHANGELOG.md | sed '1d;$d')
+            fi
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            TAG_NAME="v${VERSION}"
+          fi
+          
+          if [[ -n "$CHANGELOG" ]]; then
+            echo "$CHANGELOG" > changelog.txt
+          fi
+          
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "✅ 版本号: ${VERSION}, 标签: ${TAG_NAME}"
+
+      - name: Generate release body
+        id: generate_body
+        run: |
+          # 创建发布说明文件
+          echo "## 版本 ${VERSION} 发布" > release_body.md
+          echo "" >> release_body.md
+          
+          if [[ -f "changelog.txt" ]]; then
+            echo "### 📝 更新日志" >> release_body.md
+            echo "" >> release_body.md
+            cat changelog.txt >> release_body.md
+            echo "" >> release_body.md
+          fi
+          
+          echo "### 📦 包含文件" >> release_body.md
+          echo "" >> release_body.md
+          echo "- \`Completed-Build.zip\`: 构建完成的文档文件（包含dist目录所有内容）" >> release_body.md
+          echo "- \`Developer-Specific.zip\`: 完整源代码包（已排除依赖和构建文件）" >> release_body.md
+          
+          echo "RELEASE_BODY_FILE=release_body.md" >> $GITHUB_ENV
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.VERSION }}
+          body_path: ${{ env.RELEASE_BODY_FILE }}
+          files: |
+            Completed-Build.zip
+            Developer-Specific.zip
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

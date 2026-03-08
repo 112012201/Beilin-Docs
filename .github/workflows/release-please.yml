@@ -1,0 +1,55 @@
+name: 02 📦 Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: node
+          package-name: 北林文档站
+          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"docs","section":"Documentation","hidden":false}]'
+          # 创建预发布
+          prerelease: true
+
+      # 添加警告信息到预发布的 release body
+      - name: Add warning to prerelease
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          # 获取当前的 release body（来自 CHANGELOG.md）
+          current_body=$(gh release view "$TAG_NAME" --json body --jq .body)
+          # 添加中文和英文警告（使用 Markdown 格式）
+          new_body="${current_body}\n\n> **⚠️ 警告：此版本正在构建中，请勿下载源代码。**\n> **⚠️ Warning: This version is being built, do not download the source code.**"
+          # 更新 release body
+          gh release edit "$TAG_NAME" --notes "$new_body"
+
+      # 触发 AutoRC 工作流（只传递版本信息，不传递 changelog）
+      - name: Trigger AutoRC
+        if: steps.release.outputs.release_created == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: auto-rc
+          client-payload: |
+            {
+              "tag_name": "${{ steps.release.outputs.tag_name }}",
+              "version": "${{ steps.release.outputs.version }}"
+            }

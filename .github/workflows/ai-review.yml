@@ -1,0 +1,41 @@
+name: 01 🤖 AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    name: AI Review
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: DeepSeek Code Review
+        uses: Louis-7/ai-code-review@development
+        env:
+          ENGINE: 'deepseek'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: 'https://api.deepseek.com'
+          CHAT_GPT_MODEL: 'deepseek-chat'
+          PATH_TO_EXCLUDE: '**/*.lock, **/dist/**, **/node_modules/**, **/*.min.js, docs/.vuepress/dist/**'
+          MAX_FILE_PER_PR: 20
+          LANGUAGE: 'Chinese'
+          CUSTOMIZED_PROMPT: |
+            你是一位温和的代码审查助手。请用建议性的语气指出潜在问题，
+            使用"可以考虑"、"或许可以"等委婉表达。关注代码质量、性能和安全性。
+            如果发现问题，请提供改进建议和示例代码。
+            
+            注意：你只提供建议，最终决定权在人工审核者手中。
