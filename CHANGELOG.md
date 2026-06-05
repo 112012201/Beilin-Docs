@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.7](https://github.com/112012201/Beilin-Docs/compare/v1.2.7...v1.2.7) (2026-06-05)
+
+
+### Release-As
+
+* 1.2.7 ([43b521a](https://github.com/112012201/Beilin-Docs/commit/43b521a5f33925828e0f59c5fd64b201b30f6755))
+* 1.2.7 ([d11f342](https://github.com/112012201/Beilin-Docs/commit/d11f342e62f3cfba8ec405689fe97e6fe3775941))
+* 1.2.7 ([d8ecec0](https://github.com/112012201/Beilin-Docs/commit/d8ecec0c816494385d51eeca7bca63bac02a8ad5))
+
+
+### Features
+
+* **docs:** 更新文案内容,修改准则信息 ([fbb7b84](https://github.com/112012201/Beilin-Docs/commit/fbb7b8436cc3b13ebef6a3feda34467e0b608e9a))
+* **docs:** 更新文案内容,修改准则信息 ([bf42469](https://github.com/112012201/Beilin-Docs/commit/bf42469b6f1a44a7fee28044178bc850b349246b))
+
 ## [1.2.7](https://github.com/112012201/Beilin-Docs/compare/v1.2.7...v1.2.7) (2026-03-08)
 
 
